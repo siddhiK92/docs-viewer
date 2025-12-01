@@ -1,0 +1,120 @@
+# k8s.yaml
+# Namespace for your resources (roll no)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: "2401093"
+---
+# PersistentVolumeClaim (optional)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pdf-convertor-pvc
+  namespace: "2401093"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+# Deployment for frontend (pdf-convertor)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pdf-convertor-deployment
+  namespace: "2401093"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pdf-convertor
+  template:
+    metadata:
+      labels:
+        app: pdf-convertor
+    spec:
+      automountServiceAccountToken: false
+      # If you pull from your private registry, keep imagePullSecrets configured:
+      imagePullSecrets:
+        - name: nexus-secret
+
+      containers:
+        - name: pdf-convertor
+          # Update the registry URL and image tag as needed
+          image: 127.0.0.1:30085/2401093-project/pdf-convertor:latest
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 80
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 30
+            periodSeconds: 30
+
+          # Optional – mount PVC content into nginx html/static directory
+          volumeMounts:
+            - name: static-content
+              mountPath: /usr/share/nginx/html/static
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+              ephemeral-storage: "1Gi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+              ephemeral-storage: "2Gi"
+
+      volumes:
+        - name: static-content
+          persistentVolumeClaim:
+            claimName: pdf-convertor-pvc
+---
+# ClusterIP Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: pdf-convertor-service
+  namespace: "2401093"
+spec:
+  selector:
+    app: pdf-convertor
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  type: ClusterIP
+---
+# Ingress (adjust host to match your DNS)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pdf-convertor-ingress
+  namespace: "2401093"
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: pdf-convertor.imcc.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pdf-convertor-service
+                port:
+                  number: 80
