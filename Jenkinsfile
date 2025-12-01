@@ -6,59 +6,50 @@ apiVersion: v1
 kind: Pod
 spec:
   containers:
+
+  - name: dind
+    image: docker:dind
+    securityContext:
+      privileged: true
+    env:
+      - name: DOCKER_TLS_CERTDIR
+        value: ""
+    volumeMounts:
+      - name: docker-storage
+        mountPath: /var/lib/docker
+
   - name: sonar-scanner
-    image: sonarsource/sonar-scanner-cli:latest
-    command:
-    - cat
+    image: sonarsource/sonar-scanner-cli
+    command: ["cat"]
     tty: true
 
   - name: kubectl
     image: bitnami/kubectl:latest
-    command:
-    - cat
+    command: ["cat"]
     tty: true
-    securityContext:
-      runAsUser: 0
-      readOnlyRootFilesystem: false
     env:
-    - name: KUBECONFIG
-      value: /kube/config
+      - name: KUBECONFIG
+        value: /kube/config
     volumeMounts:
-    - name: kubeconfig-secret
-      mountPath: /kube/config
-      subPath: kubeconfig
+      - name: kubeconfig-secret
+        mountPath: /kube/config
+        subPath: kubeconfig
 
-  - name: dind
-    image: docker:24-dind
-    command:
-    - cat
-    tty: true
-    securityContext:
-      privileged: true
-    env:
-    - name: DOCKER_TLS_CERTDIR
-      value: "" 
-    volumeMounts:
-    - name: docker-config
-      mountPath: /var/lib/docker
   volumes:
-  - name: docker-config
-    emptyDir: {}
-  - name: kubeconfig-secret
-    secret:
-      secretName: kubeconfig-secret
+    - name: docker-storage
+      emptyDir: {}
+
+    - name: kubeconfig-secret
+      secret:
+        secretName: kubeconfig-secret
 '''
         }
     }
 
-    // Build-time / pipeline environment (non-sensitive). If values are secrets, use Jenkins credentials instead.
     environment {
-        # Example envs for Vite build-time. Replace with real values or pass via credentials.
-        VITE_SUPABASE_URL = credentials('supabase-url-2401093')   // optional: store URL in Jenkins Credential (string)
-        VITE_SUPABASE_ANON_KEY = credentials('supabase-anonkey-2401093') // optional: store anon key as secret text
-        // Registry host for tagging/pushing (change if different)
-        REGISTRY_HOST = "127.0.0.1:30085"
-        IMAGE_NAME = "${REGISTRY_HOST}/2401093-project/pdf-convertor:latest"
+        // TODO: put actual Supabase credentials for docs-viewer
+        VITE_SUPABASE_URL      = 'https://YOUR_DOCS_VIEWER_SUPABASE_URL'
+        VITE_SUPABASE_ANON_KEY = 'YOUR_DOCS_VIEWER_SUPABASE_ANON_KEY'
     }
 
     stages {
@@ -67,14 +58,11 @@ spec:
             steps {
                 container('dind') {
                     sh '''
-                        # give docker daemon a second to spin up in the pod
-                        sleep 8
-
-                        # Build image with Vite build-time args (if any)
+                        sleep 15
                         docker build \
-                          --build-arg VITE_SUPABASE_URL="${VITE_SUPABASE_URL}" \
-                          --build-arg VITE_SUPABASE_ANON_KEY="${VITE_SUPABASE_ANON_KEY}" \
-                          -t pdf-convertor:latest .
+                          --build-arg VITE_SUPABASE_URL='${VITE_SUPABASE_URL}' \
+                          --build-arg VITE_SUPABASE_ANON_KEY='${VITE_SUPABASE_ANON_KEY}' \
+                          -t docs-viewer:latest .
                     '''
                 }
             }
@@ -83,15 +71,15 @@ spec:
         stage('SonarQube Analysis') {
             steps {
                 container('sonar-scanner') {
-                    withCredentials([string(credentialsId: 'sonar-token-siddhi-2401093', variable: 'SONAR_TOKEN')]) {
-                        sh """
+                    withCredentials([string(credentialsId: 'sonar-token-2401093', variable: 'SONAR_TOKEN')]) {
+                        sh '''
                             sonar-scanner \
-                              -Dsonar.projectKey=2401093_siddhiKawade_LMS \
+                              -Dsonar.projectKey=2401093_siddhiKawade_LMS  \
                               -Dsonar.host.url=http://my-sonarqube-sonarqube.sonarqube.svc.cluster.local:9000 \
-                              -Dsonar.login=sqp_676d31d11866c267740429895840cd4241fa96a2 \
+                              -Dsonar.token=$SONAR_TOKEN \
                               -Dsonar.sources=src \
-                              -Dsonar.exclusions=node_modules/**,dist/** 
-                        """
+                              -Dsonar.exclusions=node_modules/**,dist/**
+                        '''
                     }
                 }
             }
@@ -100,31 +88,29 @@ spec:
         stage('Login to Docker Registry') {
             steps {
                 container('dind') {
-                    // Use Jenkins username/password credential to avoid plaintext password in pipeline
-                    withCredentials([usernamePassword(credentialsId: 'nexus-creds-2401093', usernameVariable: 'REG_USER', passwordVariable: 'REG_PASS')]) {
-                        sh '''
-                            docker --version
-                            sleep 3
-                            echo "$REG_PASS" | docker login ${REGISTRY_HOST} -u "$REG_USER" --password-stdin
-                        '''
-                    }
+                    sh '''
+                        docker --version
+                        sleep 10
+                        docker login nexus-service-for-docker-hosted-registry.nexus.svc.cluster.local:8085 -u admin -p Changeme@2025
+                    '''
                 }
             }
         }
 
-        stage('Tag & Push Image') {
+        stage('Build - Tag - Push') {
             steps {
                 container('dind') {
                     sh '''
-                        docker tag pdf-convertor:latest ${IMAGE_NAME}
+                        docker tag docs-viewer:latest \
+                          nexus-service-for-docker-hosted-registry.nexus.svc.cluster.local:8085/2401093-project/docs-viewer:latest
 
-                        # push to your registry
-                        docker push ${IMAGE_NAME}
+                        docker push \
+                          nexus-service-for-docker-hosted-registry.nexus.svc.cluster.local:8085/2401093-project/docs-viewer:latest
 
-                        # verify push by pulling (optional)
-                        docker pull ${IMAGE_NAME} || true
+                        docker pull \
+                          nexus-service-for-docker-hosted-registry.nexus.svc.cluster.local:8085/2401093-project/docs-viewer:latest
 
-                        docker image ls | grep pdf-convertor || true
+                        docker image ls
                     '''
                 }
             }
@@ -133,22 +119,13 @@ spec:
         stage('Deploy to Kubernetes') {
             steps {
                 container('kubectl') {
-                    // update path to your k8s manifest if it's placed elsewhere in repo
-                    sh '''
-                        # Apply k8s manifest to namespace 2401093
-                        kubectl apply -f k8s.yaml -n 2401093
-                    '''
+                    dir('k8s-deployment') {
+                        sh '''
+                            kubectl apply -f docs-viewer-k8s.yaml -n 2401093
+                        '''
+                    }
                 }
             }
-        }
-    }
-
-    post {
-        success {
-            echo "Pipeline completed successfully for pdf-convertor (2401093)."
-        }
-        failure {
-            echo "Pipeline failed — check the console log for details."
         }
     }
 }
