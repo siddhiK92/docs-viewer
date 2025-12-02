@@ -1,23 +1,23 @@
 version: '3.8'
 
 services:
-  pdf-convertor:
+  docs-viewer:
     build:
       context: .
       dockerfile: Dockerfile
-    image: 2401093-project/pdf-convertor:latest
-    container_name: pdf-convertor
+    image: docs-viewer:latest
+    container_name: docs-viewer
     ports:
       - "80:80"
     environment:
-      # Use a .env file to keep secrets out of source control
       - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
-      - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+      - VITE_SUPABASE_PUBLISHABLE_KEY=${VITE_SUPABASE_PUBLISHABLE_KEY}
+      - VITE_SUPABASE_PROJECT_ID=${VITE_SUPABASE_PROJECT_ID}
     restart: unless-stopped
     networks:
       - app-network
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost/ || exit 1"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
       interval: 30s
       timeout: 10s
       retries: 3

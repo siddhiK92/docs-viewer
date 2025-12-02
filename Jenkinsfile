@@ -6,45 +6,49 @@ apiVersion: v1
 kind: Pod
 spec:
   containers:
-
+  - name: sonar-scanner
+    image: sonarsource/sonar-scanner-cli
+    command:
+    - cat
+    tty: true
+  - name: kubectl
+    image: bitnami/kubectl:latest
+    command:
+    - cat
+    tty: true
+    securityContext:
+      runAsUser: 0
+      readOnlyRootFilesystem: false
+    env:
+    - name: KUBECONFIG
+      value: /kube/config        
+    volumeMounts:
+    - name: kubeconfig-secret
+      mountPath: /kube/config
+      subPath: kubeconfig
   - name: dind
     image: docker:dind
     securityContext:
-      privileged: true
+      privileged: true  # Needed to run Docker daemon
     env:
-      - name: DOCKER_TLS_CERTDIR
-        value: ""
+    - name: DOCKER_TLS_CERTDIR
+      value: ""  # Disable TLS for simplicity
     volumeMounts:
-      - name: docker-storage
-        mountPath: /var/lib/docker
-
-  - name: sonar-scanner
-    image: sonarsource/sonar-scanner-cli
-    command: ["cat"]
-    tty: true
-
-  - name: kubectl
-    image: bitnami/kubectl:latest
-    command: ["cat"]
-    tty: true
-    env:
-      - name: KUBECONFIG
-        value: /kube/config
-    volumeMounts:
-      - name: kubeconfig-secret
-        mountPath: /kube/config
-        subPath: kubeconfig
-
+    - name: docker-config
+      mountPath: /etc/docker/daemon.json
+      subPath: daemon.json  # Mount the file directly here
   volumes:
-    - name: docker-storage
-      emptyDir: {}
-
-    - name: kubeconfig-secret
-      secret:
-        secretName: kubeconfig-secret
+  - name: docker-config
+    configMap:
+      name: docker-daemon-config
+  - name: kubeconfig-secret
+    secret:
+      secretName: kubeconfig-secret
 '''
         }
     }
+    
+
 
     environment {
         // TODO: put actual Supabase credentials for docs-viewer
